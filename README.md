@@ -1,0 +1,1 @@
+# westmech-ai-recognition
