@@ -49,7 +49,6 @@ def detect_and_crop_plate(image, model, conf_threshold=0.5):
         if conf >= conf_threshold:
             # If the model is truly specialized for license plates,
             # cls should correspond to the license plate class
-            # For a generic YOLO model, we might need class filtering
             if conf > highest_conf:
                 highest_conf = conf
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
@@ -75,47 +74,15 @@ def recognize_plate_text(cropped_plate):
     # gray = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)[1]
     
     pil_img = Image.fromarray(gray)
-    text = pytesseract.image_to_string(pil_img, config="--psm 7")  # psm 7: treat the image as a single text line
+    # psm 7: treat the image as a single text line
+    text = pytesseract.image_to_string(pil_img, config="--psm 7")
     
     # Clean up text (remove spaces, newlines, etc.)
     text = ''.join(ch for ch in text if ch.isalnum())
     return text
 
 # =====================
-# 4) CREATE A COLLAGE FOR EACH PLATE GROUP
-# =====================
-def create_collage(images, collage_width=800):
-    """
-    Creates a simple horizontal collage from the given list of images (OpenCV BGR).
-    Returns the collage image (OpenCV BGR).
-    """
-    if not images:
-        return None
-    
-    # Resize each image so they have the same height
-    heights = [img.shape[0] for img in images]
-    min_height = min(heights)
-    
-    resized_imgs = []
-    for img in images:
-        ratio = min_height / img.shape[0]
-        new_width = int(img.shape[1] * ratio)
-        resized = cv2.resize(img, (new_width, min_height))
-        resized_imgs.append(resized)
-    
-    # Concatenate horizontally
-    collage = np.hstack(resized_imgs)
-    
-    # If it's wider than collage_width, scale it down
-    if collage.shape[1] > collage_width:
-        scale = collage_width / collage.shape[1]
-        new_height = int(collage.shape[0] * scale)
-        collage = cv2.resize(collage, (collage_width, new_height))
-    
-    return collage
-
-# =====================
-# 5) MAIN PIPELINE
+# 4) MAIN PIPELINE
 # =====================
 def main(
     images_folder,
@@ -129,19 +96,24 @@ def main(
         - Detect/crop plate
         - Perform OCR
         - Group images by recognized plate text
-    - Finally, create a collage for each plate group and save results in output_folder.
+        - Save each image to a folder named after the recognized plate
     """
     os.makedirs(output_folder, exist_ok=True)
     
     model = load_detection_model(model_path)
     
-    plate_groups = defaultdict(list)  # {plate_text: [ (img, filename), ... ]}
+    # Dictionary to group images by plate text
+    plate_groups = defaultdict(list)  # {plate_text: [(image, filename), ...]}
+    
+    # Collect all valid image filenames in the specified folder
     image_paths = [
         os.path.join(images_folder, f)
         for f in os.listdir(images_folder)
         if f.lower().endswith(('.png', '.jpg', '.jpeg'))
     ]
     
+    print(f"Processing {len(image_paths)} images...")
+
     for img_path in image_paths:
         # Read image
         image = cv2.imread(img_path)
@@ -157,25 +129,18 @@ def main(
         if not plate_text:
             plate_text = "UNKNOWN"
         
+        print(f"Detected: {plate_text} in image {os.path.basename(img_path)}")
+        
+        # Group image by plate_text
         plate_groups[plate_text].append((image, os.path.basename(img_path)))
     
-    # Now create a collage for each plate group
+    # Create folders and save images accordingly
     for plate_text, group_items in plate_groups.items():
-        # group_items is a list of tuples: (image, filename)
-        images = [item[0] for item in group_items]
-        
-        # Create a collage
-        collage = create_collage(images)
-        if collage is not None:
-            collage_filename = f"{plate_text}_collage.jpg"
-            collage_path = os.path.join(output_folder, collage_filename)
-            cv2.imwrite(collage_path, collage)
-            print(f"Collage saved for plate [{plate_text}] -> {collage_path}")
-
-        # Optionally, save each image to plate-specific subfolder
+        # Each group is a list of tuples: (image, filename)
         plate_folder = os.path.join(output_folder, plate_text)
         os.makedirs(plate_folder, exist_ok=True)
-        for i, (img, fname) in enumerate(group_items):
+        
+        for (img, fname) in group_items:
             out_path = os.path.join(plate_folder, fname)
             cv2.imwrite(out_path, img)
     
@@ -183,8 +148,7 @@ def main(
 
 if __name__ == "__main__":
     # Example usage
-    # Update 'images_folder' to point to your set of images.
-    images_folder = "images"  # folder containing the input images
+    images_folder = "images"  # Folder containing the input images
     output_folder = "output"
     model_path = None  # or 'best.pt' if you have a specialized license-plate model
     
