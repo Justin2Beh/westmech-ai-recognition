@@ -70,8 +70,11 @@ def recognize_plate_text(cropped_plate):
     # Convert to grayscale for better OCR results
     gray = cv2.cvtColor(cropped_plate, cv2.COLOR_BGR2GRAY)
     
-    # Optional: thresholding or other preprocessing
-    # gray = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)[1]
+    # Apply thresholding to enhance text visibility
+    gray = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    
+    # Optionally resize to improve OCR performance
+    gray = cv2.resize(gray, (0, 0), fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
     
     pil_img = Image.fromarray(gray)
     # psm 7: treat the image as a single text line
@@ -91,50 +94,54 @@ def main(
     conf_threshold=0.5
 ):
     """
-    - Loads a YOLOv5 (license plate) model
-    - For each image in images_folder:
-        - Detect/crop plate
-        - Perform OCR
-        - Group images by recognized plate text
-        - Save each image to a folder named after the recognized plate
+    Processes train, valid, and test datasets for YOLOv5 training,
+    while grouping images by detected license plates into separate folders.
     """
     os.makedirs(output_folder, exist_ok=True)
     
     model = load_detection_model(model_path)
     
-    # Dictionary to group images by plate text
+    datasets = ['train', 'valid', 'test']  # Specify dataset types
     plate_groups = defaultdict(list)  # {plate_text: [(image, filename), ...]}
     
-    # Collect all valid image filenames in the specified folder
-    image_paths = [
-        os.path.join(images_folder, f)
-        for f in os.listdir(images_folder)
-        if f.lower().endswith(('.png', '.jpg', '.jpeg'))
-    ]
-    
-    print(f"Processing {len(image_paths)} images...")
-
-    for img_path in image_paths:
-        # Read image
-        image = cv2.imread(img_path)
-        if image is None:
-            print(f"Failed to read {img_path}")
+    for dataset in datasets:
+        dataset_images_folder = os.path.join(images_folder, dataset, 'images')
+        if not os.path.exists(dataset_images_folder):
+            print(f"Dataset folder {dataset_images_folder} not found!")
             continue
+
+        print(f"Processing dataset: {dataset}")
         
-        # Detect & crop
-        cropped_plate = detect_and_crop_plate(image, model, conf_threshold=conf_threshold)
+        # Collect all valid image filenames in the specified folder
+        image_paths = [
+            os.path.join(dataset_images_folder, f)
+            for f in os.listdir(dataset_images_folder)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ]
         
-        # OCR
-        plate_text = recognize_plate_text(cropped_plate)
-        if not plate_text:
-            plate_text = "UNKNOWN"
-        
-        print(f"Detected: {plate_text} in image {os.path.basename(img_path)}")
-        
-        # Group image by plate_text
-        plate_groups[plate_text].append((image, os.path.basename(img_path)))
-    
-    # Create folders and save images accordingly
+        print(f"Processing {len(image_paths)} images in {dataset_images_folder}...")
+
+        for img_path in image_paths:
+            # Read image
+            image = cv2.imread(img_path)
+            if image is None:
+                print(f"Failed to read {img_path}")
+                continue
+            
+            # Detect & crop
+            cropped_plate = detect_and_crop_plate(image, model, conf_threshold=conf_threshold)
+            
+            # OCR
+            plate_text = recognize_plate_text(cropped_plate)
+            if not plate_text:
+                plate_text = "UNKNOWN"
+            
+            print(f"Detected: {plate_text} in image {os.path.basename(img_path)}")
+            
+            # Group image by plate_text
+            plate_groups[plate_text].append((image, os.path.basename(img_path)))
+
+    # Create folders and save grouped images based on detected plates
     for plate_text, group_items in plate_groups.items():
         # Each group is a list of tuples: (image, filename)
         plate_folder = os.path.join(output_folder, plate_text)
@@ -144,12 +151,12 @@ def main(
             out_path = os.path.join(plate_folder, fname)
             cv2.imwrite(out_path, img)
     
-    print("Processing complete!")
+    print("Processing complete! Grouped images saved to output folders.")
 
 if __name__ == "__main__":
     # Example usage
-    images_folder = "images"  # Folder containing the input images
+    images_folder = "images"  # Folder containing train, valid, and test folders
     output_folder = "output"
-    model_path = None  # or 'best.pt' if you have a specialized license-plate model
+    model_path = None  # Replace with your model path if available
     
     main(images_folder, output_folder, model_path, conf_threshold=0.5)
